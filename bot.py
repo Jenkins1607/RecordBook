@@ -8,14 +8,15 @@ from aiogram.types import (ReplyKeyboardMarkup, KeyboardButton,
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from models import Session, Homework #импорт моих моделей из models
-from datetime import datetime
+from datetime import datetime, timedelta
+import calendar
 from aiogram.fsm.context import FSMContext
 #импорт функций из database
 from database import (get_all_homework,add_homework, get_homework_by_date,
                       get_homework_for_week, get_homework_for_two_weeks,
                       update_homework, get_homework_by_subject_and_deadline, delete_homework, delete_all_homework)
 
-API_TOKEN = 'MY_BOT'
+API_TOKEN = '7710271530:AAFafmG3j1BHFJOxdcIXgstCsmPdq_IL6zk'
 router = Router()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ async def start_command(message: types.Message):
         resize_keyboard=True
     )
 
-    await message.answer("Добро пожаловать в Дневник! Выберите действие:", reply_markup=keyboard)
+    await message.answer("Выберите действие:", reply_markup=keyboard)
 # Обработка нажатия кнопки "Отмена"
 @router.message(lambda message: message.text == "Отмена")
 async def cancel_button(message,state):
@@ -81,66 +82,105 @@ async def cancel_action(message,state: FSMContext):
     await state.clear()  # Очищаем состояние
     await message.answer('Выберите действие заново')
 
-#Функция добавления д/з
+#Функция добавления д/з-----------------------------------------------
 @router.message(Command("add_homework"))
 async def add_homework_command(message: types.Message, state: FSMContext):
     await state.set_state(Form.subject)
 
     await message.answer("Введите предмет:")
 
-#FSMContext - объект, который предоставляет доступ к контексту конечного автомата состояний
 @router.message(Form.subject)
 async def process_subject(message: types.Message, state: FSMContext):
     subject = message.text.lower()
     await state.update_data(subject=subject)
 
-
     await state.set_state(Form.task)
+
     await message.answer('Введите задание:')
 
 
 @router.message(Form.task)
 async def process_task(message: types.Message, state: FSMContext):
-    await state.update_data(task=message.text)
-    await state.set_state(Form.deadline)
+    task = message.text.lower()
+    await state.update_data(task=task)
 
-    await message.answer("Введите дедлайн (в формате YYYY-MM-DD):")
-
-@router.message(Form.deadline)
-async def process_deadline(message: types.Message, state: FSMContext):
-    tg_id = message.from_user.id
-
-    user_data = await state.get_data() #данные, сохраненные в контексте состояния для текущего пользователя
+    user_data = await state.get_data()
+    logger.info(f"user_data = {user_data}")
     subject = user_data['subject']
     task = user_data['task']
-    deadline = message.text
 
-    try:
-        # Пробуем преобразовать строку в объект datetime
-        deadline_date = datetime.strptime(deadline, '%Y-%m-%d')
-    except ValueError:
-        # Если возникла ошибка, формат даты неверный
-        await message.answer("Неверный формат дедлайна. Пожалуйста, используйте формат YYYY-MM-DD.")
-        return  # Завершаем выполнение функции
+    #Получаем текущую дату и создаем список возможных дедлайнов
+    current_date = datetime.now().date()
 
+    days_list = [(current_date + timedelta(days=i)).day for i in range(14)]
+    date_list = [(current_date + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(14)]
 
-    existing_homework = get_homework_by_subject_and_deadline(subject, deadline,tg_id)
-    logger.info(f"existing_homework: {existing_homework}")
+    #Создаём список дат в формате YYYY-MM-DD для сохранения в БД
+    date_list = [(current_date.replace(day=day)).strftime('%Y-%m-%-d') for day in days_list]
+
+    await state.update_data(days_list=days_list)
+    await state.update_data(date_list=date_list)
+    await state.update_data(subject=subject)
+    await state.update_data(task=task)
+    keyboard = await inline_days_keyboard(days_list)
+    await message.answer("Выберите срок сдачи:",reply_markup= keyboard)
+
+@router.callback_query(lambda c: c.data.isdigit())
+async def process_deadline_selection(callback_query: types.CallbackQuery,
+                                     state: FSMContext):
+    tg_id = callback_query.from_user.id
+
+    day_selected = int(callback_query.data) #Получаем выбранный день
+    user_data = await state.get_data()
+    date_list = user_data['date_list']
+    deadline = date_list[day_selected - 1]
+
+    subject = user_data['subject']
+    task = user_data['task']
+
+    logger.info(f"user_data_(2) = {user_data}")
+
+    existing_homework = get_homework_by_subject_and_deadline(subject,deadline,tg_id)
+    logger.info(f"Существующая домашняя работа: {existing_homework}")
 
     if existing_homework:
         task_old = existing_homework[0][2]
-        combined_task = f"{task}, {task_old}"
-        # Если запись найдена, обновляем её
-        update_homework(existing_homework[0][0], subject, combined_task, deadline, tg_id)  # Передаем ID и другие данные
-        await message.answer("Задание обновлено в существующей записи!")
-    else:
-        # Если записи нет, добавляем новое домашнее задание
-        add_homework(subject, task, deadline,tg_id)
-        await message.answer("Домашнее задание добавлено!")
+        combined_task = f"{task_old}, {task}"
+        update_homework(existing_homework[0][0],subject,
+                        combined_task, deadline,tg_id)
+        message = "Задание обновлено в существующей записи!"
+        await callback_query.message.edit_reply_markup(reply_markup=None)
+        await callback_query.message.answer(message)
 
-    #Очистка состояния после добавления д/з
+    else:
+        add_homework(subject,task,deadline,tg_id)
+        message = "Домашнее задание добавлено!"
+        await callback_query.message.edit_reply_markup(reply_markup=None)
+        await callback_query.message.answer(message)
+
+
+
     await state.clear()
 
+#создание клавиатуры
+async def inline_days_keyboard(days_list):
+    keyboard = InlineKeyboardMarkup(inline_keyboard= [])
+    row = []
+    for deadline in days_list:
+        buttons = InlineKeyboardButton(text= f"{deadline}",
+                                      callback_data=f"{int(deadline)}")
+        row.append(buttons)
+        if len(row) == 5:
+            keyboard.inline_keyboard.append(row)
+            row = []
+
+    if row:
+        keyboard.inline_keyboard.append(row)
+
+    return keyboard
+
+
+#Функция получения д/з-----------------------------------------------
 @router.message(Command('get_homework'))
 async def get_homework(message: types.Message):
     inline_period_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -149,7 +189,8 @@ async def get_homework(message: types.Message):
             InlineKeyboardButton(text="Неделя", callback_data="get_homework_week")
         ],
         [
-            InlineKeyboardButton(text="2 недели", callback_data="get_homework_two_weeks")
+            InlineKeyboardButton(text="2 недели", callback_data="get_homework_two_weeks"),
+            InlineKeyboardButton(text="За всё время", callback_data="get_all")
         ]
     ])  # Создаем клавиатуру с кнопками для выбора периода
 
@@ -163,7 +204,7 @@ async def get_homework_day(callback_query: types.CallbackQuery):
     homework = get_homework_by_date(today,tg_id)
 
     if homework:
-        response = "\n".join([f"{h[1].capitalize()} : {h[2]} ({h[3]})" for h in homework])
+        response = "\n".join([f"{h[1].capitalize()} : {h[2]} ({h[3][5:]})" for h in homework])
     else:
         response = "Нет домашних заданий на сегодня."
 
@@ -178,7 +219,7 @@ async def get_homework_week(callback_query: types.CallbackQuery):
     homework = get_homework_for_week(today,  tg_id)
 
     if homework:
-        response = "\n".join([f"{h[1].capitalize()} : {h[2]} ({h[3]})" for h in homework])
+        response = "\n".join([f"{h[1].capitalize()} : {h[2]} ({h[3][5:]})" for h in homework])
     else:
         response = "Нет домашних заданий на эту неделю."
 
@@ -193,12 +234,26 @@ async def get_homework_two_weeks(callback_query: types.CallbackQuery):
     homework = get_homework_for_two_weeks(today,tg_id)
 
     if homework:
-        response = "\n".join([f"{h[1].capitalize()} : {h[2]} ({h[3]})" for h in homework])
+        response = "\n".join([f"{h[1].capitalize()} : {h[2]} ({h[3][5:]})" for h in homework])
     else:
         response = "Нет домашних заданий за следующие две недели."
 
     await callback_query.answer()  # Подтверждаем нажатие кнопки
     await callback_query.message.answer(response)  # Отправляем ответ
+
+#Функция получения всех д/з
+@router.callback_query(lambda c: c.data == "get_all")
+async def get_all(callback_query: types.CallbackQuery):
+    tg_id = callback_query.from_user.id
+    homework = get_all_homework(tg_id)
+    if homework:
+        response = "\n".join([f"{h[1].capitalize()} : {h[2]} ({h[3][5:]})" for h in homework])
+    else:
+        response = "Лист домашних заданий пуст"
+
+    await callback_query.answer()
+    await callback_query.message.answer(response)
+
 
 #функция обновления (редактирования) д/з
 @router.message(Command('update_homework'))
@@ -230,9 +285,9 @@ async def update_subject(message: types.Message, state: FSMContext):
         # Преобразуем строку даты в объект datetime и форматируем
         deadline_date = datetime.strptime(deadline, "%Y-%m-%d")
         formatted_deadline = deadline_date.strftime("%-d %B")
-        button_text = f"{subject_name} - {deadline}"  # Формируем текст кнопки
+        button_text = f"{subject_name.capitalize()}  ({deadline[5:]})"  # Формируем текст кнопки
 
-        button = InlineKeyboardButton(text=button_text, callback_data=f"subject:{subject_name.lower()}:{deadline}")
+        button = InlineKeyboardButton(text=button_text, callback_data=f"subject:{subject_name}:{deadline}")
         keyboard.inline_keyboard.append([button])  # Добавляем кнопку в новую строку
 
     await state.update_data(homework_list=homework_list)
