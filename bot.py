@@ -16,7 +16,7 @@ from database import (get_all_homework,add_homework, get_homework_by_date,
                       get_homework_for_week, get_homework_for_two_weeks,
                       update_homework, get_homework_by_subject_and_deadline, delete_homework, delete_all_homework)
 
-API_TOKEN = '7710271530:AAFafmG3j1BHFJOxdcIXgstCsmPdq_IL6zk'
+API_TOKEN = 'MY_TOKEN'
 router = Router()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
