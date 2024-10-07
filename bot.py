@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import sys
+import os
+from dotenv import load_dotenv
 from aiogram.filters import Command, CommandStart
 from aiogram import Bot,types,Dispatcher, Router,F
 from aiogram.types import (ReplyKeyboardMarkup, KeyboardButton,
@@ -15,8 +17,8 @@ from aiogram.fsm.context import FSMContext
 from database import (get_all_homework,add_homework, get_homework_by_date,
                       get_homework_for_week, get_homework_for_two_weeks,
                       update_homework, get_homework_by_subject_and_deadline, delete_homework, delete_all_homework)
-
-API_TOKEN = 'MY_TOKEN'
+load_dotenv()
+API_TOKEN = os.getenv('API_TOKEN')
 router = Router()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -116,24 +118,54 @@ async def process_task(message: types.Message, state: FSMContext):
     date_list = [(current_date + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(14)]
 
     #Создаём список дат в формате YYYY-MM-DD для сохранения в БД
-    date_list = [(current_date.replace(day=day)).strftime('%Y-%m-%-d') for day in days_list]
+    date_list = [(current_date.replace(day=day)).strftime('%Y-%m-%d') for day in days_list]
 
     await state.update_data(days_list=days_list)
     await state.update_data(date_list=date_list)
     await state.update_data(subject=subject)
     await state.update_data(task=task)
     keyboard = await inline_days_keyboard(days_list)
-    await message.answer("Выберите срок сдачи:",reply_markup= keyboard)
+    await message.answer("Выберите день сдачи задания:",reply_markup= keyboard)
 
 @router.callback_query(lambda c: c.data.isdigit())
 async def process_deadline_selection(callback_query: types.CallbackQuery,
                                      state: FSMContext):
     tg_id = callback_query.from_user.id
-
-    day_selected = int(callback_query.data) #Получаем выбранный день
+    day_selected = str(callback_query.data) #Получаем выбранный день
+    if int(day_selected) < 10:
+        day_selected = '0' + day_selected
+    else:
+        day_selected = str(callback_query.data)
+    logger.info(f"day_selected: {day_selected}")
     user_data = await state.get_data()
     date_list = user_data['date_list']
-    deadline = date_list[day_selected - 1]
+    logger.info(f"date_list: {date_list}")
+
+    date_list_index = []
+
+    for i in (date_list):
+        i = datetime.strptime(i, "%Y-%m-%d")
+        i = str(i.date().day)
+        if int(i) < 10:
+            i = '0' + i
+        date_list_index.append(i)
+
+    logger.info(f"i: {i,type(i)}")
+
+    index_deadline = None  # Инициализируем переменную
+    logger.info(f"date_list_index: {date_list_index}")
+    for k in range(len(date_list_index)):
+        if date_list_index[k] == day_selected:
+            index_deadline = k
+            logger.info(f"index_deadline: {index_deadline}")
+            break  # Выход из цикла, если найден индекс
+
+    if index_deadline is not None:  # Проверяем, найден ли индекс
+        deadline = date_list[index_deadline]
+        logger.info(f"deadline: {deadline}")
+    else:
+        logger.warning("Selected day not found in date_list_index.")
+        # Обработка случая, когда день не найден
 
     subject = user_data['subject']
     task = user_data['task']
