@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sys
 import os
+from aiogram.types import FSInputFile
 from dotenv import load_dotenv
 from aiogram.filters import Command, CommandStart
 from aiogram import Bot,types,Dispatcher, Router,F
@@ -38,17 +39,11 @@ class Form(StatesGroup):
 async def start_command(message: types.Message):
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Добавить д/з")],
-            [KeyboardButton(text="Получить д/з")],
-            [KeyboardButton(text="Обновить д/з")],
-            [KeyboardButton(text="Удалить все д/з")],
-            [KeyboardButton(text="Удалить д/з")],
-            [KeyboardButton(text="Отмена")]  # Кнопка отмены
-        ],
-        resize_keyboard=True
-    )
+            [KeyboardButton(text="Добавить д/з"),KeyboardButton(text="Получить д/з")],
+            [KeyboardButton(text="Обновить д/з"),KeyboardButton(text="Удалить все д/з")],
+            [KeyboardButton(text="Удалить д/з"),KeyboardButton(text="Отмена")]],resize_keyboard=True)
 
-    await message.answer("Выберите действие:", reply_markup=keyboard)
+    await message.answer("✍🏻 Выберите действие:", reply_markup=keyboard)
 # Обработка нажатия кнопки "Отмена"
 @router.message(lambda message: message.text == "Отмена")
 async def cancel_button(message,state):
@@ -82,15 +77,115 @@ async def delete_all_homework_button(message: types.Message,state: FSMContext):
 #Функция отмены
 async def cancel_action(message,state: FSMContext):
     await state.clear()  # Очищаем состояние
-    await message.answer('Выберите действие заново')
+    await message.answer('🤸‍Выберите действие заново')
+
+#Предметы матфака
+math_subject = ["Тех. прог. и раб. на ЭВМ",
+                "Экономика",
+                "Математический анализ",
+                "Дифференциальные уравнения",
+                "Иностр. язык",
+                "Управление проектами",
+                "Алгебра",
+                "Психология",
+                "Элементарная геометрия"]
+
+alina_subject = ["История русской лит-ры",
+                 "Основы военной подготовки",
+                 "УПК осн. иностр. языка",
+                 "Иностранный язык",
+                 "История мировой (зарубежной) лит-ры",
+                 "Страноведение",
+                 "Практ. курс второго ин. яз.",
+                 "Психология",
+                 "Основы проектной деятельности",
+                 "Теор. фонетика"]
+
+#-------------------------------------------------------------------------------------------------------------------------
+#Функция для создания инлайн кнопок с предметами фМиКн
+async def inline_math_subject_keyboard():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    row = []
+    for subject in math_subject:
+        buttons = InlineKeyboardButton(text=subject,
+                                       callback_data=subject)
+        row.append(buttons)
+        if len(row) == 2:
+            keyboard.inline_keyboard.append(row)
+            row = []
+
+    if row:
+        keyboard.inline_keyboard.append(row)
+
+    return keyboard
+#Функция для создания инлайн кнопок с предметами РГФ
+async def inline_alina_subject_keyboard():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    row = []
+    for subject in alina_subject:
+        buttons = InlineKeyboardButton(text=subject,
+                                       callback_data=subject)
+        row.append(buttons)
+        if len(row) == 2:
+            keyboard.inline_keyboard.append(row)
+            row = []
+
+    if row:
+        keyboard.inline_keyboard.append(row)
+
+    return keyboard
+
+
 
 #Функция добавления д/з-----------------------------------------------
 @router.message(Command("add_homework"))
 async def add_homework_command(message: types.Message, state: FSMContext):
     await state.set_state(Form.subject)
 
-    await message.answer("Введите предмет:")
+    #инлайн-кнопка фМиКн
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="фМиКн", callback_data="show_math_subjects")],
+                                                     [InlineKeyboardButton(text="РГФ", callback_data="show_alina_subjects")]])
 
+    await message.answer("📖 Выберите факультет КУБгу, чтобы увидеть предметы\n или введите предмет самостоятельно, если вы не из данного учебного заведения:",
+                         reply_markup=keyboard)
+
+#Обработка нажатия на кнопку ФмИкН
+@router.callback_query(lambda c: c.data == "show_math_subjects")
+async def show_math_subjects(callback_query: types.CallbackQuery):
+    keyboard = await inline_math_subject_keyboard()
+    await callback_query.message.answer("📚 Выберите предмет из списка:",reply_markup=keyboard)
+
+#Обработка нажатия на кнопку РГФ
+@router.callback_query(lambda c: c.data == "show_alina_subjects")
+async def show_math_subjects(callback_query: types.CallbackQuery):
+    keyboard = await inline_alina_subject_keyboard()
+    await callback_query.message.answer("📚 Выберите предмет из списка:",reply_markup=keyboard)
+
+
+#Обработка выбора предмета через инлайн-кнопки фМиКн
+@router.callback_query(lambda c: c.data in math_subject)
+async def process_math_subject(callback_query: types.CallbackQuery,
+                               state: FSMContext):
+    subject = callback_query.data.lower()
+    await state.update_data(subject=subject)
+
+    await state.set_state(Form.task)
+    await callback_query.message.answer('📑 Введите задание:')
+    # Скрываем клавиатуру
+    await callback_query.message.edit_reply_markup(reply_markup=None)
+
+#Обработка выбора предмета через инлайн-кнопки РГФ
+@router.callback_query(lambda c: c.data in alina_subject)
+async def process_math_subject(callback_query: types.CallbackQuery,
+                               state: FSMContext):
+    subject = callback_query.data.lower()
+    await state.update_data(subject=subject)
+
+    await state.set_state(Form.task)
+    await callback_query.message.answer('📑 Введите задание:')
+    # Скрываем клавиатуру
+    await callback_query.message.edit_reply_markup(reply_markup=None)
+#-------------------------------------------------------------------------------------------------------------------------
 @router.message(Form.subject)
 async def process_subject(message: types.Message, state: FSMContext):
     subject = message.text.lower()
@@ -98,7 +193,7 @@ async def process_subject(message: types.Message, state: FSMContext):
 
     await state.set_state(Form.task)
 
-    await message.answer('Введите задание:')
+    await message.answer('📑 Введите задание:')
 
 
 @router.message(Form.task)
@@ -124,8 +219,19 @@ async def process_task(message: types.Message, state: FSMContext):
     await state.update_data(date_list=date_list)
     await state.update_data(subject=subject)
     await state.update_data(task=task)
+
+    # Отправка стикера перед выбором дедлайна
+    sticker_id = 'CAACAgIAAxkBAAEJBqVnBDlsqITg1HKIHebLzgYE6j6REwACTgADWbv8JQ3rz9n50HgqNgQ'  # Ваш идентификатор стикера
+    try:
+        await message.answer_sticker(sticker=sticker_id)  # Отправляем стикер
+    except Exception as e:
+        await message.answer(f"Произошла ошибка при отправке стикера: {str(e)}")
+
     keyboard = await inline_days_keyboard(days_list)
-    await message.answer("Выберите день сдачи задания:",reply_markup= keyboard)
+
+    keyboard = await inline_days_keyboard(days_list)
+
+    await message.answer("🕰 Выберите день сдачи задания:",reply_markup= keyboard)
 
 @router.callback_query(lambda c: c.data.isdigit())
 async def process_deadline_selection(callback_query: types.CallbackQuery,
